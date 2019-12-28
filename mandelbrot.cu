@@ -52,13 +52,13 @@ __host__ __device__ float abs2(complex v)
 }
 
 // Find the iteration count for the pixel
-__device__ int pixel_iterations(int w, int h, complex& cmin, complex& cmax,
+__device__ int pixel_iterations(int w, int h, complex* cmin, complex* cmax,
         int x, int y)
 {
-    complex dc = cmax - cmin;
+    complex dc = (*cmax) - (*cmin);
     float fx = (float)x / w;
     float fy = (float)y / h;
-    complex c = cmin + complex(fx * dc.real(), fy * dc.imag());
+    complex c = (*cmin) + complex(fx * dc.real(), fy * dc.imag());
     int iteration = 0;
     complex z = c;
     while(iteration < MAX_ITER_COUNT && abs2(z) < 2 * 2) {
@@ -83,7 +83,7 @@ __device__ int compare_counts(int d1, int d2)
 }
 
 // Evaluates the common iteration count on the border, if it exists
-__device__ int border_iterations(int w, int h, complex& cmin, complex& cmax,
+__device__ int border_iterations(int w, int h, complex* cmin, complex* cmax,
         int x0, int y0, int d)
 {
     // Check whether all boundary pixels have the same iteration count 
@@ -127,8 +127,8 @@ __global__ void iter_fill_k(int *iters, int w, int x0, int y0, int d, int iter_c
 } 
 
 // The kernel to count per-pixel values of the portion of the Mandelbrot set
-__global__ void mandelbrot_pixel_k(int *iter_counts, int w, int h, complex& cmin,
-        complex& cmax, int x0, int y0, int d)
+__global__ void mandelbrot_pixel_k(int *iter_counts, int w, int h, complex* cmin,
+        complex* cmax, int x0, int y0, int d)
 {
     int x = threadIdx.x + blockDim.x * blockIdx.x;
     int y = threadIdx.y + blockDim.y * blockIdx.y;
@@ -154,8 +154,8 @@ __global__ void mandelbrot_pixel_k(int *iter_counts, int w, int h, complex& cmin
         @remarks the algorithm reverts to per-pixel Mandelbrot evaluation once
         either maximum depth or minimum size is reached
  */
-__global__ void mandelbrot_block_k(int *iter_counts, int w, int h, complex& cmin,
-        complex& cmax, int x0, int y0, int d, int depth)
+__global__ void mandelbrot_block_k(int *iter_counts, int w, int h, complex* cmin,
+        complex* cmax, int x0, int y0, int d, int depth)
 {
     // Origin of this block
     x0 += d * blockIdx.x;
@@ -213,12 +213,21 @@ int main(int argc, char **argv)
     dim3 bs(BSX, BSY);
     dim3 grid(INIT_SUBDIV, INIT_SUBDIV);
 
-    complex cmin = complex(-1.5, -1);
-    complex cmax = complex(0.5, 1);
+    complex *cmin, *cmax;
+    cudaMalloc(&cmin, sizeof(complex));
+    cudaMalloc(&cmax, sizeof(complex));
+
+    complex cmintemp = complex(-1.5, -1);
+    complex cmaxtemp = complex(0.5, 1);
+
+    cudaMemcpy(cmin, &cmintemp, sizeof(complex), cudaMemcpyHostToDevice);
+    cudaMemcpy(cmax, &cmaxtemp, sizeof(complex), cudaMemcpyHostToDevice);
 
     // Launch the recursive kernel with initial number of blocks
     mandelbrot_block_k<<<grid, bs>>>(d_iter_counts, w, h, cmin,
             cmax, 0, 0, w / INIT_SUBDIV, 1);
+
+    CUDA_CHECK( cudaGetLastError() );
  
     // Synchronize for timing   
     CUDA_CHECK( cudaDeviceSynchronize() );
